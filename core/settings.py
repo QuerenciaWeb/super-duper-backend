@@ -25,9 +25,15 @@ SECRET_KEY = 'django-insecure-%y&hx!k=wfm*m87sg7tr5zjj-nj1p-s@3o-@-&@97y0nbg5h+z
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = False
 
-ALLOWED_HOSTS = ['*']
+ALLOWED_HOSTS = ['super-duper-backend-pvrx.onrender.com', # URL de Render
+                 'tu-frontend.vercel.app', # URL de tu frontend en Vercel
+                 'localhost',
+                 '127.0.0.1']
 
-
+CORS_ALLOWED_ORIGINS = [
+    "https://tu-frontend.vercel.app", # URL de tu frontend en Vercel
+    "http://localhost:5173", # Para pruebas locales
+]
 # Application definition
 
 INSTALLED_APPS = [
