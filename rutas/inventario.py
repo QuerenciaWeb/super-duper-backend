@@ -10,8 +10,9 @@ from esquemas.inventario import (
     CategoriaSchema, CategoriaResponse,
     ProveedorSchema, ProveedorResponse,
     ProductoCreate, ProductoUpdate, ProductoResponse,
-    EntradaProductoCreate, EntradaProductoResponse,
+    EntradaProductoCreate, EntradaProductoResponse, PrediccionResponse,
 )
+from crud.predicciones import predecir_stock
 from crud.inventario import (
     crear_categoria, crear_proveedor,
     crear_producto, actualizar_producto, formatear_producto,
@@ -35,8 +36,18 @@ def listar_categorias(request):
 def agregar_categoria(request, datos: CategoriaSchema):
     verificar_admin(request)
     if Categoria.objects.filter(codigo=datos.codigo).exists():
-        raise HttpError(400, f"Ya existe una categoría con el código '{datos.codigo}'.")
+        raise HttpError(400, f"Ya existe una categoría activa con el código '{datos.codigo}'.")
     return crear_categoria(datos)
+
+@inventario_router.delete("/categorias/{codigo}", auth=AuthBearer())
+def eliminar_categoria(request, codigo: str):
+    verificar_admin(request)
+    try:
+        cat = Categoria.objects.get(codigo=codigo)
+        cat.delete()
+        return {"success": True, "message": "Categoría eliminada lógicamente"}
+    except Categoria.DoesNotExist:
+        raise HttpError(404, "Categoría no encontrada")
 
 # ==================== PROVEEDORES ====================
 @inventario_router.get("/proveedores", response=List[ProveedorResponse], auth=AuthBearer())
@@ -47,8 +58,18 @@ def listar_proveedores(request):
 def agregar_proveedor(request, datos: ProveedorSchema):
     verificar_admin(request)
     if Proveedor.objects.filter(nit=datos.nit).exists():
-        raise HttpError(400, f"Ya existe un proveedor con el NIT '{datos.nit}'.")
+        raise HttpError(400, f"Ya existe un proveedor activo con el NIT '{datos.nit}'.")
     return crear_proveedor(datos)
+
+@inventario_router.delete("/proveedores/{nit}", auth=AuthBearer())
+def eliminar_proveedor(request, nit: str):
+    verificar_admin(request)
+    try:
+        prov = Proveedor.objects.get(nit=nit)
+        prov.delete()
+        return {"success": True, "message": "Proveedor eliminado lógicamente"}
+    except Proveedor.DoesNotExist:
+        raise HttpError(404, "Proveedor no encontrado")
 
 # ==================== PRODUCTOS ====================
 @inventario_router.get("/productos", response=List[ProductoResponse], auth=AuthBearer())
@@ -112,6 +133,27 @@ def registrar_nueva_entrada(request, datos: EntradaProductoCreate):
         raise HttpError(404, "Producto no encontrado")
     except Proveedor.DoesNotExist:
         raise HttpError(404, "Proveedor no encontrado")
+
+# ==================== PREDICCIONES ====================
+@inventario_router.get("/predicciones", response=List[PrediccionResponse], auth=AuthBearer())
+def listar_predicciones(request, horizonte: int = 7, historial: int = 56):
+    """Consumo proyectado, días de stock restantes y cantidad sugerida a pedir por insumo."""
+    verificar_admin(request)
+    if not (1 <= horizonte <= 60) or not (14 <= historial <= 365):
+        raise HttpError(400, "horizonte debe estar entre 1 y 60 días e historial entre 14 y 365 días.")
+    return predecir_stock(horizonte=horizonte, historial=historial)
+
+# ==================== GOOGLE SHEETS ====================
+@inventario_router.post("/sincronizar-sheets", auth=AuthBearer())
+def sincronizar_hoja_stock(request):
+    verificar_admin(request)
+    from crud.sheets import sincronizar_stock, SheetsConfigError
+    try:
+        return sincronizar_stock()
+    except SheetsConfigError as e:
+        raise HttpError(503, str(e))
+    except Exception as e:
+        raise HttpError(502, f"No se pudo actualizar Google Sheets: {e}")
 
 # ==================== REPORTE EXCEL ====================
 @inventario_router.get("/reporte/excel", auth=AuthBearer())

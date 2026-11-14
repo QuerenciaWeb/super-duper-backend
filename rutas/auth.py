@@ -11,7 +11,7 @@ from ninja.errors import HttpError
 from django.db import transaction
 from django.utils import timezone
 
-from modelos.models import TokenInvitacion
+from modelos.models import TokenInvitacion, Usuario
 from crud.usuario import crear_usuario, obtener_usuario_por_correo
 from esquemas.usuario import (
     Token, UsuarioCreate, UsuarioLogin, UsuarioResponse,
@@ -34,7 +34,7 @@ class AuthBearer(HttpBearer):
             
             # Buscar el usuario en la BD
             usuario = obtener_usuario_por_correo(correo)
-            if usuario is None:
+            if usuario is None or not usuario.activo:
                 return None
             return usuario  # Esto se asigna a request.auth
         except JWTError:
@@ -100,9 +100,11 @@ def registrar(request, usuario: UsuarioCreate):
 
 @router.post("/login", response=Token, url_name="login")
 def login(request, credenciales: UsuarioLogin):
-    usuario = obtener_usuario_por_correo(credenciales.correo)
+    usuario = Usuario.all_objects.filter(correo=credenciales.correo).first()
     if not usuario or not check_password(credenciales.contrasena, usuario.contrasena):
         raise HttpError(401, "Correo o contraseña incorrectos")
+    if not usuario.activo:
+        raise HttpError(403, "Esta cuenta ha sido desactivada o eliminada.")
     
     tiempo_expiracion = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     token_acceso = crear_token_acceso(

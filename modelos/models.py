@@ -1,12 +1,94 @@
 import uuid
 from django.db import models
 from django.core.mail import send_mail
+from django.utils import timezone
 
 
 # ============================================================
-# Modelo existente: TokenInvitacion (se conserva sin cambios)
+# Clases Base para Borrado Lógico (Soft Delete)
 # ============================================================
-class TokenInvitacion(models.Model):
+class SoftDeleteQuerySet(models.QuerySet):
+    def delete(self):
+        """Borrado lógico en bloque para querysets."""
+        return self.update(activo=False, fecha_eliminacion=timezone.now())
+
+    def hard_delete(self):
+        """Borrado físico real de los registros."""
+        return super().delete()
+
+    def activos(self):
+        """Filtra solo los registros activos."""
+        return self.filter(activo=True)
+
+    def eliminados(self):
+        """Filtra solo los registros borrados lógicamente."""
+        return self.filter(activo=False)
+
+    def restaurar(self):
+        """Restaura en bloque los registros borrados lógicamente."""
+        return self.update(activo=True, fecha_eliminacion=None)
+
+
+class SoftDeleteManager(models.Manager):
+    def __init__(self, include_deleted=False, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.include_deleted = include_deleted
+
+    def get_queryset(self):
+        qs = SoftDeleteQuerySet(self.model, using=self._db)
+        if not self.include_deleted:
+            return qs.filter(activo=True)
+        return qs
+
+    def todos(self):
+        """Retorna todos los registros, activos e inactivos."""
+        return SoftDeleteQuerySet(self.model, using=self._db)
+
+    def eliminados(self):
+        """Retorna solo los registros eliminados lógicamente."""
+        return SoftDeleteQuerySet(self.model, using=self._db).filter(activo=False)
+
+
+class SoftDeleteModel(models.Model):
+    """
+    Modelo abstracto base que implementa borrado lógico en lugar de físico.
+    """
+    activo = models.BooleanField(default=True, db_index=True, verbose_name="Activo / No Eliminado")
+    fecha_eliminacion = models.DateTimeField(null=True, blank=True, verbose_name="Fecha de Eliminación Lógica")
+
+    objects = SoftDeleteManager()
+    all_objects = SoftDeleteManager(include_deleted=True)
+
+    class Meta:
+        abstract = True
+
+    def delete(self, using=None, keep_parents=False):
+        """Realiza el borrado lógico marcando activo=False y registrando la fecha."""
+        self.activo = False
+        self.fecha_eliminacion = timezone.now()
+        if self.pk:
+            self.save(update_fields=['activo', 'fecha_eliminacion'])
+        else:
+            self.save()
+
+    def hard_delete(self, using=None, keep_parents=False):
+        """Elimina físicamente el registro de la base de datos."""
+        super().delete(using=using, keep_parents=keep_parents)
+
+    def restaurar(self):
+        """Restaura un registro borrado lógicamente."""
+        self.activo = True
+        self.fecha_eliminacion = None
+        if self.pk:
+            self.save(update_fields=['activo', 'fecha_eliminacion'])
+        else:
+            self.save()
+
+
+# ============================================================
+# Modelo existente: TokenInvitacion
+# ============================================================
+class TokenInvitacion(SoftDeleteModel):
     correo_destino = models.EmailField(max_length=100)
     token = models.CharField(max_length=100, unique=True, default=uuid.uuid4)
     tipo_usuario = models.CharField(max_length=20, default='normal') # 'administrador' | 'normal'
@@ -52,9 +134,9 @@ class TokenInvitacion(models.Model):
 
 
 # ============================================================
-# Usuario (ya existía — se cambia db_table a 'Usuario')
+# Usuario
 # ============================================================
-class Usuario(models.Model):
+class Usuario(SoftDeleteModel):
     dni = models.CharField(primary_key=True, max_length=20, verbose_name="DNI del Usuario")
     nombre = models.CharField(max_length=100)
     correo = models.EmailField(unique=True, max_length=100)
@@ -74,6 +156,14 @@ class Usuario(models.Model):
         verbose_name = 'Usuario'
         verbose_name_plural = 'Usuarios'
 
+    def delete(self, using=None, keep_parents=False):
+        super().delete(using=using, keep_parents=keep_parents)
+        # Propagar borrado lógico a perfiles relacionados
+        if hasattr(self, 'administrador') and self.administrador:
+            self.administrador.delete()
+        if hasattr(self, 'invitado') and self.invitado:
+            self.invitado.delete()
+
     def __str__(self):
         return f"{self.nombre} ({self.correo})"
 
@@ -81,7 +171,7 @@ class Usuario(models.Model):
 # ============================================================
 # Administrador
 # ============================================================
-class Administrador(models.Model):
+class Administrador(SoftDeleteModel):
     usuario = models.OneToOneField(
         Usuario,
         on_delete=models.CASCADE,
@@ -100,7 +190,7 @@ class Administrador(models.Model):
 # ============================================================
 # Invitado (para usuarios de tipo normal)
 # ============================================================
-class Invitado(models.Model):
+class Invitado(SoftDeleteModel):
     usuario = models.OneToOneField(
         Usuario,
         on_delete=models.CASCADE,
@@ -119,7 +209,7 @@ class Invitado(models.Model):
 # ============================================================
 # Categoria
 # ============================================================
-class Categoria(models.Model):
+class Categoria(SoftDeleteModel):
     codigo = models.CharField(primary_key=True, max_length=50, verbose_name="Código de Categoría")
     nombre = models.CharField(max_length=100)
     descripcion = models.TextField(blank=True, default='')
@@ -136,7 +226,7 @@ class Categoria(models.Model):
 # ============================================================
 # Proveedor
 # ============================================================
-class Proveedor(models.Model):
+class Proveedor(SoftDeleteModel):
     nit = models.CharField(primary_key=True, max_length=50, verbose_name="NIT del Proveedor")
     nombre = models.CharField(max_length=100)
     telefono = models.CharField(max_length=20)
@@ -154,7 +244,7 @@ class Proveedor(models.Model):
 # ============================================================
 # Producto (FK → Categoria)
 # ============================================================
-class Producto(models.Model):
+class Producto(SoftDeleteModel):
     dni_producto = models.CharField(primary_key=True, max_length=50, verbose_name="DNI del Producto")
     nombre = models.CharField(max_length=100)
     descripcion = models.TextField(blank=True, default='')
@@ -174,10 +264,15 @@ class Producto(models.Model):
         verbose_name = 'Producto'
         verbose_name_plural = 'Productos'
 
+    def delete(self, using=None, keep_parents=False):
+        super().delete(using=using, keep_parents=keep_parents)
+        # Propagar borrado lógico a ingredientes asociados a recetas
+        self.ingredientes_receta.all().delete()
+
     def save(self, *args, **kwargs):
         super().save(*args, **kwargs)
         # Check stock and create notification if it drops below threshold (e.g. 10)
-        if self.stock < 10:
+        if self.activo and self.stock < 10:
             import datetime
             Notificacion.objects.get_or_create(
                 mensaje=f"Alerta de Stock Bajo: El producto/insumo {self.nombre} (DNI: {self.dni_producto}) tiene un stock de {self.stock}.",
@@ -191,7 +286,7 @@ class Producto(models.Model):
 # ============================================================
 # RecetaInsumo (Relación Plato <-> Insumos de Inventario descontados)
 # ============================================================
-class RecetaInsumo(models.Model):
+class RecetaInsumo(SoftDeleteModel):
     id = models.AutoField(primary_key=True)
     plato = models.ForeignKey(
         Producto,
@@ -217,7 +312,7 @@ class RecetaInsumo(models.Model):
 # ============================================================
 # EntradaProducto (FK → Proveedor, FK → Producto)
 # ============================================================
-class EntradaProducto(models.Model):
+class EntradaProducto(SoftDeleteModel):
     idEntrada = models.AutoField(primary_key=True)
     proveedor = models.ForeignKey(
         Proveedor,
@@ -236,9 +331,6 @@ class EntradaProducto(models.Model):
 
     class Meta:
         db_table = 'EntradaProducto'
-
-    class Meta:
-        db_table = 'EntradaProducto'
         verbose_name = 'Entrada de Producto'
         verbose_name_plural = 'Entradas de Productos'
 
@@ -249,7 +341,7 @@ class EntradaProducto(models.Model):
 # ============================================================
 # Pedido (FK → Usuario)
 # ============================================================
-class Pedido(models.Model):
+class Pedido(SoftDeleteModel):
     idPedido = models.AutoField(primary_key=True)
     fecha = models.DateField()
     estado = models.CharField(max_length=50)
@@ -270,6 +362,10 @@ class Pedido(models.Model):
         verbose_name = 'Pedido'
         verbose_name_plural = 'Pedidos'
 
+    def delete(self, using=None, keep_parents=False):
+        super().delete(using=using, keep_parents=keep_parents)
+        self.detalles.all().delete()
+
     def __str__(self):
         return f"Pedido #{self.idPedido} - {self.estado}"
 
@@ -277,7 +373,7 @@ class Pedido(models.Model):
 # ============================================================
 # DetallePedido (FK → Pedido, FK → Producto)
 # ============================================================
-class DetallePedido(models.Model):
+class DetallePedido(SoftDeleteModel):
     idDetalle = models.AutoField(primary_key=True)
     cantidad = models.IntegerField()
     subtotal = models.DecimalField(max_digits=10, decimal_places=2)
@@ -306,7 +402,7 @@ class DetallePedido(models.Model):
 # ============================================================
 # Inventario (FK → EntradaProducto, FK → Producto, FK → Pedido)
 # ============================================================
-class Inventario(models.Model):
+class Inventario(SoftDeleteModel):
     idInventario = models.AutoField(primary_key=True)
     entradaDeProducto = models.ForeignKey(
         EntradaProducto,
@@ -338,7 +434,7 @@ class Inventario(models.Model):
 # ============================================================
 # Factura (FK → Pedido)
 # ============================================================
-class Factura(models.Model):
+class Factura(SoftDeleteModel):
     idFactura = models.AutoField(primary_key=True)
     numero_factura = models.CharField(max_length=50, unique=True, null=True, blank=True)
     fecha = models.DateField(auto_now_add=True)
@@ -368,7 +464,7 @@ class Factura(models.Model):
 # ============================================================
 # Facturacion (FK → Pedido, FK → Factura)
 # ============================================================
-class Facturacion(models.Model):
+class Facturacion(SoftDeleteModel):
     idMovimiento = models.AutoField(primary_key=True)
     tipo = models.CharField(max_length=50)
     monto = models.DecimalField(max_digits=10, decimal_places=2)
@@ -396,7 +492,7 @@ class Facturacion(models.Model):
 # ============================================================
 # Caja (FK → Facturacion)
 # ============================================================
-class Caja(models.Model):
+class Caja(SoftDeleteModel):
     idCaja = models.AutoField(primary_key=True)
     fechaApertura = models.DateField()
     SaldoInicial = models.DecimalField(max_digits=10, decimal_places=2)
@@ -420,7 +516,7 @@ class Caja(models.Model):
 # ============================================================
 # Notificacion
 # ============================================================
-class Notificacion(models.Model):
+class Notificacion(SoftDeleteModel):
     idNotificacion = models.AutoField(primary_key=True)
     mensaje = models.TextField()
     fecha = models.DateField()
@@ -437,7 +533,7 @@ class Notificacion(models.Model):
 # ============================================================
 # Reporte
 # ============================================================
-class Reporte(models.Model):
+class Reporte(SoftDeleteModel):
     idReporte = models.AutoField(primary_key=True)
     fechaGeneracion = models.DateField()
     tipo = models.CharField(max_length=50)

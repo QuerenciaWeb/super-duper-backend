@@ -200,8 +200,9 @@ def cancelar_pedido(request, pedido_id: int):
             det.producto.save()
             
         pedido.estado = "Cancelado"
+        pedido.delete()
         pedido.save()
-        return {"message": "Pedido cancelado correctamente y stock devuelto."}
+        return {"message": "Pedido cancelado y eliminado lógicamente de forma correcta, stock devuelto."}
     except Pedido.DoesNotExist:
         raise HttpError(404, "Pedido no encontrado")
 

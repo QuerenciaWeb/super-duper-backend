@@ -12,8 +12,8 @@ def obtener_usuario(id_usuario: str):
 def obtener_usuario_por_correo(correo: str):
     return Usuario.objects.filter(correo=correo).first()
 
-def obtener_usuarios(skip: int = 0, limit: int = 100, buscar: str = None):
-    qs = Usuario.objects.all()
+def obtener_usuarios(skip: int = 0, limit: int = 100, buscar: str = None, incluir_eliminados: bool = False):
+    qs = Usuario.all_objects.all() if incluir_eliminados else Usuario.objects.all()
     if buscar:
         qs = qs.filter(
             Q(dni__icontains=buscar) |
@@ -25,6 +25,21 @@ def obtener_usuarios(skip: int = 0, limit: int = 100, buscar: str = None):
 
 def crear_usuario(usuario: UsuarioCreate, token_invitacion: TokenInvitacion = None):
     contrasena_encriptada = make_password(usuario.contrasena)
+    
+    # Si el usuario ya existía pero fue eliminado lógicamente, se reactiva
+    existente = Usuario.all_objects.filter(dni=usuario.dni).first()
+    if existente:
+        existente.activo = True
+        existente.fecha_eliminacion = None
+        existente.nombre = usuario.nombre
+        existente.correo = usuario.correo
+        existente.contrasena = contrasena_encriptada
+        existente.tipo_usuario = usuario.tipo_usuario
+        existente.token = usuario.token
+        existente.token_invitacion = token_invitacion
+        existente.save()
+        return existente
+
     db_usuario = Usuario(
         dni=usuario.dni,
         nombre=usuario.nombre,
@@ -32,7 +47,8 @@ def crear_usuario(usuario: UsuarioCreate, token_invitacion: TokenInvitacion = No
         contrasena=contrasena_encriptada,
         tipo_usuario=usuario.tipo_usuario,
         token=usuario.token,
-        token_invitacion=token_invitacion
+        token_invitacion=token_invitacion,
+        activo=True
     )
     db_usuario.save()
     return db_usuario
@@ -56,5 +72,13 @@ def eliminar_usuario(id_usuario: str):
     db_usuario = obtener_usuario(id_usuario)
     if not db_usuario:
         return None
+    # Borrado lógico: marca activo=False y fecha_eliminacion
     db_usuario.delete()
+    return db_usuario
+
+def restaurar_usuario(id_usuario: str):
+    db_usuario = Usuario.all_objects.filter(dni=id_usuario).first()
+    if not db_usuario:
+        return None
+    db_usuario.restaurar()
     return db_usuario

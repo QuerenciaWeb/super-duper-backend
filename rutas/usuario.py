@@ -8,6 +8,7 @@ from crud.usuario import (
     obtener_usuarios,
     actualizar_usuario,
     eliminar_usuario,
+    restaurar_usuario,
 )
 from esquemas.usuario import UsuarioResponse, UsuarioUpdate
 
@@ -37,7 +38,18 @@ def modificar_usuario(request, id_usuario: str, usuario_update: UsuarioUpdate):
 def borrar_usuario(request, id_usuario: str):
     if request.auth.tipo_usuario != 'administrador':
         raise HttpError(403, "No tienes permisos de administrador para realizar esta acción.")
+    if request.auth.dni == id_usuario:
+        raise HttpError(400, "No puedes eliminar tu propia cuenta de administrador.")
     db_usuario = eliminar_usuario(id_usuario)
     if not db_usuario:
         raise HttpError(404, "Usuario no encontrado")
-    return {"message": f"Usuario con ID {id_usuario} eliminado correctamente"}
+    return {"message": f"Usuario con ID {id_usuario} eliminado lógicamente correctamente", "activo": False}
+
+@router.post("/{id_usuario}/restaurar", response=UsuarioResponse, auth=AuthBearer())
+def reactivar_usuario(request, id_usuario: str):
+    if request.auth.tipo_usuario != 'administrador':
+        raise HttpError(403, "No tienes permisos de administrador para realizar esta acción.")
+    db_usuario = restaurar_usuario(id_usuario)
+    if not db_usuario:
+        raise HttpError(404, "Usuario no encontrado para restaurar")
+    return db_usuario

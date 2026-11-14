@@ -83,3 +83,18 @@ class EntradaProductoResponse(Schema):
     proveedor_nombre: Optional[str] = None
     producto_id: str
     producto_nombre: Optional[str] = None
+
+# PREDICCIONES
+class PrediccionResponse(Schema):
+    dni_producto: str
+    nombre: str
+    categoria_nombre: Optional[str] = None
+    stock: int
+    proveedor_habitual: Optional[str] = None
+    riesgo: str  # CRITICO | ALERTA | OK | SIN_CONSUMO | SIN_DATOS
+    tendencia: str  # SUBE | BAJA | ESTABLE | SIN_DATOS
+    consumo_diario: Optional[float] = None
+    demanda_horizonte: Optional[float] = None
+    dias_restantes: Optional[float] = None
+    fecha_agotamiento: Optional[str] = None
+    cantidad_sugerida: Optional[int] = None

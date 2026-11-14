@@ -5,10 +5,27 @@ from django.utils import timezone
 
 # --- CATEGORIAS ---
 def crear_categoria(datos):
+    existente = Categoria.all_objects.filter(codigo=datos.codigo).first()
+    if existente:
+        existente.activo = True
+        existente.fecha_eliminacion = None
+        existente.nombre = datos.nombre
+        existente.descripcion = datos.descripcion or ''
+        existente.save()
+        return existente
     return Categoria.objects.create(**datos.dict())
 
 # --- PROVEEDORES ---
 def crear_proveedor(datos):
+    existente = Proveedor.all_objects.filter(nit=datos.nit).first()
+    if existente:
+        existente.activo = True
+        existente.fecha_eliminacion = None
+        existente.nombre = datos.nombre
+        existente.telefono = datos.telefono
+        existente.correo = datos.correo
+        existente.save()
+        return existente
     return Proveedor.objects.create(**datos.dict())
 
 # --- PRODUCTOS ---
@@ -17,14 +34,28 @@ def crear_producto(datos):
     if datos.categoria_id:
         categoria = Categoria.objects.get(codigo=datos.categoria_id)
     
+    existente = Producto.all_objects.filter(dni_producto=datos.dni_producto).first()
+    if existente:
+        existente.activo = True
+        existente.fecha_eliminacion = None
+        existente.nombre = datos.nombre
+        existente.descripcion = datos.descripcion or ''
+        existente.precio = datos.precio
+        existente.stock = datos.stock
+        existente.es_insumo = datos.es_insumo
+        existente.categoria = categoria
+        existente.save()
+        return existente
+
     return Producto.objects.create(
         dni_producto=datos.dni_producto,
         nombre=datos.nombre,
-        descripcion=datos.descripcion,
+        descripcion=datos.descripcion or '',
         precio=datos.precio,
         stock=datos.stock,
         es_insumo=datos.es_insumo,
-        categoria=categoria
+        categoria=categoria,
+        activo=True
     )
 
 def crear_plato_con_insumos(datos):
@@ -57,16 +88,31 @@ def crear_plato_con_insumos(datos):
             insumo.stock -= cant
             insumo.save()
 
-        # 3. Crear el plato en el menú
-        plato = Producto.objects.create(
-            dni_producto=datos.dni_producto,
-            nombre=datos.nombre.strip(),
-            descripcion=datos.descripcion or '',
-            precio=datos.precio,
-            stock=datos.stock,
-            es_insumo=False,
-            categoria=categoria
-        )
+        # 3. Crear o reactivar el plato en el menú
+        plato = Producto.all_objects.filter(dni_producto=datos.dni_producto).first()
+        if plato:
+            plato.activo = True
+            plato.fecha_eliminacion = None
+            plato.nombre = datos.nombre.strip()
+            plato.descripcion = datos.descripcion or ''
+            plato.precio = datos.precio
+            plato.stock = datos.stock
+            plato.es_insumo = False
+            plato.categoria = categoria
+            plato.save()
+            # Limpiar ingredientes previos
+            plato.ingredientes_receta.all().hard_delete()
+        else:
+            plato = Producto.objects.create(
+                dni_producto=datos.dni_producto,
+                nombre=datos.nombre.strip(),
+                descripcion=datos.descripcion or '',
+                precio=datos.precio,
+                stock=datos.stock,
+                es_insumo=False,
+                categoria=categoria,
+                activo=True
+            )
 
         # 4. Guardar los ingredientes en RecetaInsumo
         for insumo, cant in insumos_a_descontar:
